@@ -214,21 +214,12 @@ Type objective_function<Type>::operator() ()
     
     if( runRW==1 )
     {
-//      if( t < 20 ) // Comment this line out to apply run size prior in every year
+      if( t < 20 ) // Comment this line out to apply run size prior in every year
       {
           vector<Type> runErr = lnRunSize_st.col(t+1)-lnRunSize_st.col(t);
           nlp -= dnorm( runErr, Type(0), runSD, TRUE ).sum();
       }
     }
-    else if( runRW==2 & t < 20 )
-    {
-//      if( t < 20 ) // Comment this line out to apply run size prior in every year
-      {
-          vector<Type> runErr = lnRunSize_st.col(t+1)-lnRunSize_st.col(t);
-          nlp -= dnorm( runErr, Type(0), runSD, TRUE ).sum();
-      }
-    }
-  }
 
   // Total objective function
   Type objFun = nllI_tg.sum() +
