@@ -220,6 +220,7 @@ Type objective_function<Type>::operator() ()
           nlp -= dnorm( runErr, Type(0), runSD, TRUE ).sum();
       }
     }
+  }
 
   // Total objective function
   Type objFun = nllI_tg.sum() +
