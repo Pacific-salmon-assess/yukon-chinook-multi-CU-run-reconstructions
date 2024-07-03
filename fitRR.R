@@ -34,24 +34,16 @@ fitRR <- function( ctlFile="estControlFile.txt",
   # DATA -------------------------------------------------------------------- #
 
   # Observed numbers by stock, day, year and gear
-  n0_sdtg <- chinookYkData$n_pdtg[ , ,as.character(years), ]
-  n_sdtg <- n0_sdtg
-  n_sdtg[ , , ,1] <- n0_sdtg[ , , ,2]
-  n_sdtg[ , , ,2] <- n0_sdtg[ , , ,1]
+  n_sdtg <- chinookYkData$n_sdtg[ , ,as.character(years), ]
   # Abundance indices by day, year and gear
-  E0_dtg  <- chinookYkData$E_dtg[ ,as.character(years), ]
-  E_dtg <- E0_dtg
-  E_dtg[ , ,1] <- E0_dtg[ , ,2]
-  E_dtg[ , ,2] <- E0_dtg[ , ,1]
+  E_dtg  <- chinookYkData$E_dtg[ ,as.character(years), ]
   # Mark-recapture run size indices for fish wheel years only (<2005)
-  borderDat <- read.csv("data/border-passage.csv") %>%
+  borderPass <- chinookYkData$borderPass %>%
                filter( year %in% years )
-  I_t <- borderDat$mean
-  mrCV_t <- borderDat$cv
-  # Don't fit to mark-recapture index in sonar years
+  I_t <- borderPass$mean
+  CV_t <- borderPass$cv
   I_t[years>=2005] <- NA
-  mrCV_t[years>=2005] <- NA
-  
+  CV_t[years>=2005] <- NA
 
   # Set NAs before first obs and after last obs to 0
   for( t in 1:nT )
@@ -71,7 +63,7 @@ fitRR <- function( ctlFile="estControlFile.txt",
                 E_dtg     = E_dtg,
                 I_t       = I_t,
                 day_d     = days,
-                mrCV_t    = mrCV_t,
+                CV_t      = CV_t,
                 runRW     = runRW,    # Run size random walk switch (0=off, 1=on)
                 runSD     = 1 )       # Run size random walk std dev
 
@@ -172,7 +164,7 @@ fitRR <- function( ctlFile="estControlFile.txt",
                     map        = map,
                     DLL        = "yukonChinookRunRecon",
                     random     = NULL )
-
+browser()
   # Set bounds
   low <- obj$par*0-Inf
   upp <- obj$par*0+Inf

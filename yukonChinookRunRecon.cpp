@@ -43,7 +43,7 @@ Type objective_function<Type>::operator() ()
   DATA_ARRAY(E_dtg);      // Daily counts
   DATA_VECTOR(I_t);       // Run size indices from mark-recapture
   DATA_VECTOR(day_d);     // Model days (Julian)
-  DATA_VECTOR(mrCV_t);     // Model days (Julian)
+  DATA_VECTOR(CV_t);      // Model days (Julian)
   DATA_INTEGER(runRW);
   DATA_SCALAR(runSD);
 
@@ -185,7 +185,7 @@ Type objective_function<Type>::operator() ()
     // Poisson likelihood for mark-recapture indices
     if( !isNA(I_t(t)) )
     {
-      mrSD_t(t) = sqrt( log(square(mrCV_t(t))+1) );
+      mrSD_t(t) = sqrt( log(square(CV_t(t))+1) );
       nllMR -= dnorm( log(I_t(t)),
                       log(mrIhat_t(t)),
                       mrSD_t(t),
@@ -240,7 +240,7 @@ Type objective_function<Type>::operator() ()
   REPORT(E_dtg);
   REPORT(I_t);
   REPORT(day_d);
-  REPORT(mrCV_t);
+  REPORT(CV_t);
   REPORT(mrSD_t);
 
   // Dimensions
