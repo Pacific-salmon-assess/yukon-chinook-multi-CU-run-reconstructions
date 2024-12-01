@@ -1,0 +1,28 @@
+{
+    "id": "06EC4C95",
+    "path": null,
+    "project_path": null,
+    "type": "object_explorer",
+    "hash": "0",
+    "contents": "",
+    "dirty": false,
+    "created": 1728019023197.0,
+    "source_on_save": false,
+    "relative_order": 5,
+    "properties": {
+        "id": "a25cc35844bc428d8b5c0ea84630b47c",
+        "name": "rpt",
+        "title": "rpt",
+        "language": "R",
+        "source_window_id": "",
+        "Source": "Source"
+    },
+    "folds": "",
+    "lastKnownWriteTime": 2142939553472,
+    "encoding": "",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1728019023197,
+    "read_only": false,
+    "read_only_alternatives": []
+}

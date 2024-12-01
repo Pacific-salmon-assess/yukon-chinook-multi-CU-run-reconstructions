@@ -1,0 +1,32 @@
+CU_border_passage <- Rse$lCI*1e-3
+dim(CU_border_passage) <- c(8,39)
+CU_spwn <- CU_border_passage * (1-cdn_er)
+
+colnames(CU_spwn) <- seq(1985,2023)
+rownames(CU_spwn) <- c("NorthernYukonR.andtribs.","Whiteandtribs.","Pelly","Stewart","Nordenskiold","YukonR.Teslinheadwaters","MiddleYukonR.andtribs.","UpperYukonR.")
+
+CU_spwn_df <- as.data.frame(CU_spwn)
+CU_spwn_df$CU <- rownames(CU_spwn)
+
+
+CU_spawn_long_low <- CU_spwn_df %>% 
+  pivot_longer(!CU, names_to = 'Year', values_to = 'spawn')
+
+
+CU_border_passage <- Rse$uCI*1e-3
+dim(CU_border_passage) <- c(8,39)
+CU_spwn <- CU_border_passage * (1-cdn_er)
+
+colnames(CU_spwn) <- seq(1985,2023)
+rownames(CU_spwn) <- c("NorthernYukonR.andtribs.","Whiteandtribs.","Pelly","Stewart","Nordenskiold","YukonR.Teslinheadwaters","MiddleYukonR.andtribs.","UpperYukonR.")
+
+CU_spwn_df <- as.data.frame(CU_spwn)
+CU_spwn_df$CU <- rownames(CU_spwn)
+
+
+CU_spawn_long_high <- CU_spwn_df %>% 
+  pivot_longer(!CU, names_to = 'Year', values_to = 'spawn')
+
+
+CU_spawn_long$spawn_low <- CU_spawn_long_low$spawn
+CU_spawn_long$spawn_high <- CU_spawn_long_high$spawn

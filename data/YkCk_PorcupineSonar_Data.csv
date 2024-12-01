@@ -1,0 +1,19 @@
+# Annual estimates of Chinook  on the Porcupine River,,,,,,,,
+# Overview of site and methods at https://www.yukonriverpanel.com/re-fund-project/porcupine-river-chinook-salmon-sonar-program/,,,,,,,,
+# Year = Run year,,,,,,,,
+# Estimate = run size of ?ALL? Chinook at Porcupine Sonar,,,,,,,,
+# SE = Standard Error calculated based on INSERT,,,,,,,,
+# p10 and p90 = 10th abd 90th percentiles of the ?posterior distribution?,,,,,,,,
+# Variance  = Calculated based on INSERT,,,,,,,,
+# CV = Coefficient of Variation = SE / Estimate,,,,,,,,
+Year,Estimate,SE,p10,p90,Variance,CV,Use,UseNotes
+2014,3066,NA,NA,NA,NA,NA,TRUE,TBI
+2015,4851,NA,NA,NA,NA,NA,TRUE,TBI
+2016,6665,NA,NA,NA,NA,NA,TRUE,TBI
+2017,1191,NA,NA,NA,NA,NA,TRUE,TBI
+2018,3414,NA,NA,NA,NA,NA,TRUE,TBI
+2019,4740,NA,NA,NA,NA,NA,TRUE,TBI
+2020,NA,NA,NA,NA,NA,NA,NA,NA
+2021,409,NA,NA,NA,NA,NA,TRUE,TBI
+2022,349,NA,NA,NA,NA,NA,TRUE,TBI
+2023,512,NA,NA,NA,NA,NA,TRUE,TBI

@@ -1,0 +1,1406 @@
+---
+title: "Tables and Figures"
+date: '`r format(Sys.time(), "%d %B, %Y")`'
+output:
+  html_document:
+    collapsed: no
+    fig_caption: yes
+    highlight: espresso
+    number_sections: yes
+    smooth_scroll: yes
+    theme: sandstone
+    toc: yes
+    toc_float: yes
+    keep_md: true
+---
+
+```{=html}
+<style type="text/css">
+
+body{ /* Normal  */
+      font-size: 13px;
+  }
+td {  /* Table  */
+  font-size: 13px;
+}
+h1.title {
+  font-size: 24px;
+  color: Black;
+}
+h1 { /* Header 1 */
+  font-size: 19px;
+  color: Black;
+}
+h2 { /* Header 2 */
+    font-size: 15px;
+  color: Black;
+}
+</style>
+```
+Tables and figures for CSAS research document: "Estimates of biological benchmarks for the Canadian-origin Yukon River mainstem Chinook salmon (*Oncorhynchus tshawytscha*) stock aggregate"
+
+```{r setup, include=FALSE}
+# Settings and libraries
+
+knitr::opts_chunk$set(echo = FALSE, message=FALSE, cache=FALSE, include=TRUE)
+knitr::opts_chunk$set(dpi=300)
+
+options(scipen=1, digits=4)
+# options(width=50, width.cutoff=50, digits = 6) 
+#library(kintr)
+library(tidyverse)
+library(kableExtra)
+library(ggthemes)
+library(rstan)
+library(tidybayes)
+library(mcmcplots)
+library(bayesplot)
+library(reshape2)
+library(ggpubr)
+library(viridis)
+
+# Read in Model Data and Output Files for each of the three models (base/body count, total eggs and total egg mass versions)
+model_name <- "Yukon-Integrated-RR-SRA-v9.7"
+stan.fit.bodies <- readRDS(file=file.path("output", model_name, "stan.fit.rds"))
+stan.data.bodies <- readRDS(file=file.path("output", model_name, "stan.data.rds"))
+model_bodies_pars <- rstan::extract(stan.fit.bodies)
+
+sr_years <- stan.data.bodies$years
+nyrs <- length(sr_years)
+
+model_name <- "Yukon-Integrated-RR-SRA-v9.7.eq-eggs"
+stan.fit.egg <- readRDS(file=file.path("output", model_name, "stan.fit.rds"))
+stan.data.egg <- readRDS(file=file.path("output", model_name, "stan.data.rds"))
+model_egg_pars <- rstan::extract(stan.fit.egg)
+
+model_name <- "Yukon-Integrated-RR-SRA-v9.7.eq-mass"
+stan.fit.mass <- readRDS(file=file.path("output", model_name, "stan.fit.rds"))
+stan.data.mass <- readRDS(file=file.path("output", model_name, "stan.data.rds"))
+model_mass_pars <- rstan::extract(stan.fit.mass)
+
+# Escapement quality files
+fem_age_comps <- read.csv("data/female_age_comps.csv")
+fem_len_comp <- read.csv("data/female_length_comps.csv")
+fem_len_comp_eggs <- read.csv("data/female_length_comps_eggs.csv")
+fem_len_comp_mass <- read.csv("data/female_length_comps_egg_mass.csv")
+
+# function to derive reproductive output per fish for a given time period
+  # metric: "eggs" or egg "mass"
+  # model: integrated SS-SRA stan model object
+  # data: integrated SS-SRA stan data object
+  # firstYr: first year index over which to calculate reproductive output
+  # lastYr: last year index over which to calculate reproductive output
+
+getAvgEq <- function(metric, model, data, firstYr, lastYr){
+  model <- model
+  data <- data
+  
+  avgSpwn <- apply(exp(model$lnS[,firstYr:lastYr]),2,median)
+  femAgeComp <- data$fem_S_comps[firstYr:lastYr,]
+
+    if(metric=="eggs"){
+    metricAtAge <- avgSpwn*femAgeComp*data$fem_fec_comps[firstYr:lastYr,]
+    avgMetric <- sum((colMeans(metricAtAge)/(sum(colMeans(metricAtAge))))*colMeans(data$fem_fec_comps[firstYr:lastYr,]))  
+    }
+
+    if(metric=="mass"){
+    metricAtAge <- avgSpwn*femAgeComp*data$fem_egg_mass_comps[firstYr:lastYr,]
+    avgMetric <- sum((colMeans(metricAtAge)/(sum(colMeans(metricAtAge))))*colMeans(data$fem_egg_mass_comps[firstYr:lastYr,]))  
+    }  
+
+  avgPropFem <- sum(colMeans(femAgeComp))
+  
+  list(avgMetric =avgMetric, avgPropFem =avgPropFem)
+}
+
+# function to derive total reproductive output for a given spawner abundance
+  # propF: proportion of spawners that are females
+  # units_per_fish: reproductive output units per fish
+  # spw_units: total spawners
+
+repo_unit_to_spwn <- function(propF, units_per_fish, spw_units){
+  spawners <- (spw_units/units_per_fish) * (1+((1-propF)/propF))
+  
+  return(spawners)
+}
+
+# Sgen1 function
+get_Sgen <- function(a, b, int_lower, int_upper, SMSY) {
+  fun_Sgen <- function(Sgen, a, b, SMSY) {Sgen* a * exp( - b*Sgen) - SMSY}
+  Sgen <- uniroot(fun_Sgen, interval=c(int_lower, int_upper), a=a, b=b, SMSY=SMSY)$root
+}
+
+# Benchmarks
+max_samples <- dim(model_bodies_pars$lnalpha_c)
+
+sr_years <- stan.data.bodies $years
+
+bench <- matrix(NA,max_samples,2,
+                dimnames = list(seq(1:max_samples),c("Sgen","U_msr")))
+
+spw <- seq(1,200000, length.out = 10000)
+
+for(i in 1:max_samples){
+  r <- sample(seq(1,max_samples),1,replace=T)
+  a <- model_bodies_pars$lnalpha_c[r]
+  b <- model_bodies_pars$beta[r]
+  smsy <- model_bodies_pars$Smsy_Sch_corr[r]
+  sgen <- get_Sgen(exp(a),b,-1,1/b*2,smsy)
+  SR_pred <- (exp(a)*spw*exp(-b*spw))
+  
+  yield_avg <- SR_pred-spw
+  hr <- yield_avg/SR_pred
+
+  bench[i,1] <- sgen
+  bench[i,2] <- hr[which.max(SR_pred)]
+}
+
+bench.quant <- apply(bench, 2, quantile, probs=c(0.025,0.25,0.5,0.75,0.975), na.rm=T)
+
+benchmarks <- summary(stan.fit.bodies, pars= c( "lnalpha_c","beta", "sigma_R", "phi", "S_max", "S_eq_c", "Smsy_Sch_corr","Umsy_Sch_corr"))$summary[,c(1,4,6,8:10)]
+
+sgen <- c(mean(bench[,1]),bench.quant[1,1],bench.quant[3,1], bench.quant[5,1],NA,NA)
+umsr <- c(mean(bench[,2]),bench.quant[1,2],bench.quant[3,2], bench.quant[5,2],NA,NA)
+
+benchmarks2 <- rbind(benchmarks,sgen,umsr)
+
+rownames(benchmarks2) <- c("log (alpha)", "beta", "sigma R", "phi", "Smax", "Seq", "Smsy", "Umsy", "Sgen", "Umsr")
+
+benchmarks2 <- benchmarks2[,c(1,3,2,4:6)]
+
+```
+
+# Figures
+
+## Figure 1
+
+```{r fig1, echo=FALSE, fig.align = "center", out.width = '90%'}
+knitr::include_graphics('data/external-figures/fig.1.integrated.schematic.png')
+```
+
+**Figure 1**. Schematic of integrated model illustrating key data inputs, model components, and inferential outputs.
+
+## Figure 2
+
+```{r fig2, echo=FALSE, fig.align = "center", out.width = '80%'}
+knitr::include_graphics('data/external-figures/fig.2.DataOverview_ModelReport.png')
+
+```
+
+**Figure 2**. Data types and years that the integrated model was fit to. Dark blue squares mark years where estimates included measures of uncertainty that were accounted for. Light blue circles are years where only point estimates were available. Years where data exist, but were not used due to data concerns, are marked with a red "x."
+
+## Figure 3
+
+```{r fig3, echo=FALSE, fig.align = "center", out.width = '85%'}
+knitr::include_graphics('data/external-figures/fig.3.map.png')
+
+```
+
+**Figure 3**. Yukon River drainage, mainstem monitoring projects locations (stars), escapement monitoring project locations (black dots), and Chinook salmon stocks groups (grey shading). Reproduced from Hamazaki (2021).
+
+## Figure 4
+
+```{r fig4, echo=FALSE, fig.align = "center", out.width = '65%'}
+
+knitr::include_graphics('data/external-figures/fig.4.RR.schematic.png')
+
+```
+
+**Figure 4**. Schematic of multi-stock run reconstruction model structure and key sources of data (a: aerial survey; f: foot survey; t: tower; s: sonar; w: weir). Numbers in boxes correspond to the eight stages in the run reconstruction model. Reproduced from Hamazaki (2021).
+
+## Figure 5
+
+```{r fig5, echo=FALSE, fig.align="center", fig.height=7, fig.width=5}
+
+# summarize run estimates
+canrun <- model_bodies_pars$can_run
+canrun.quant <- t(apply(canrun, 2, quantile, probs=c(0.025,0.5,0.975)))/1000
+midrun <- model_bodies_pars$mid_run
+midrun.quant <- t(apply(midrun, 2, quantile, probs=c(0.025,0.5,0.975)))/1000
+lowrun <- model_bodies_pars$low_run
+lowrun.quant <- t(apply(lowrun, 2, quantile, probs=c(0.025,0.5,0.975)))/1000
+totrun <- canrun + midrun + lowrun
+totrun.quant <- t(apply(totrun, 2, quantile, probs=c(0.025,0.5,0.975)))/1000
+
+#summarize esc estimates
+canesc <- model_bodies_pars$canesc
+canesc.quant <- t(apply(canesc, 2, quantile, probs=c(0.025,0.5,0.975)))/1000
+midesc <- model_bodies_pars$midesc
+midesc.quant <-t(apply(midesc, 2, quantile, probs=c(0.025,0.5,0.975)))/1000
+lowesc <- model_bodies_pars$lowesc
+lowesc.quant <- t(apply(lowesc, 2, quantile, probs=c(0.025,0.5,0.975)))/1000
+totesc <- canesc + midesc + lowesc
+totesc.quant <- t(apply(totesc, 2, quantile, probs=c(0.025,0.5,0.975)))/1000
+
+#rm(canrun, midrun, lowrun, totrun, canesc, midesc, lowesc, totesc)
+
+#median(totrun); median(canrun);median(midrun); median(lowrun)
+#max(totrun.quant[,2]); min(totrun.quant[,2])
+#run_cor <- cor(cbind(canrun.quant[,2],midrun.quant[,2],lowrun.quant[,2]))
+#median(run_cor[row(run_cor)!=col(run_cor)])
+
+#dataframe
+counts.sum <- rbind(canrun.quant, midrun.quant, lowrun.quant, totrun.quant, canesc.quant,
+                    midesc.quant, lowesc.quant, totesc.quant)
+colnames(counts.sum) <- c("low95", "med50", "hi95")
+counts.fig <- data.frame(year = rep(sr_years,8), 
+                         stock = rep(c("Canada", "Middle", "Lower", "Total"), 
+                                  each = nyrs), 
+                         count = rep(c("Run", "Escapement"), 
+                                  each = nyrs*4), 
+                         counts.sum, stringsAsFactors = TRUE)
+
+#summarize harvest estimates
+canhar <- model_bodies_pars$can_run - model_bodies_pars$canesc
+canhar.quant <- t(apply(canhar, 2, quantile, probs=c(0.025,0.5,0.975)))
+midhar <- model_bodies_pars$mid_run - model_bodies_pars$midesc
+midhar.quant <-t(apply(midhar, 2, quantile, probs=c(0.025,0.5,0.975)))
+lowhar <- model_bodies_pars$low_run - model_bodies_pars$lowesc
+lowhar.quant <- t(apply(lowhar, 2, quantile, probs=c(0.025,0.5,0.975)))
+tothar <- canhar + midhar + lowhar
+tothar.quant <- t(apply(tothar, 2, quantile, probs=c(0.025,0.5,0.975)))
+
+#summarize harvest rate estimates
+canharrate <- ((model_bodies_pars$can_run - model_bodies_pars$canesc)/model_bodies_pars$can_run)*100
+canharrate.quant <- t(apply(canharrate, 2, quantile, probs=c(0.025,0.5,0.975)))
+midharrate <- ((model_bodies_pars$mid_run - model_bodies_pars$midesc)/model_bodies_pars$mid_run)*100
+midharrate.quant <-t(apply(midharrate, 2, quantile, probs=c(0.025,0.5,0.975)))
+lowharrate <- ((model_bodies_pars$low_run - model_bodies_pars$lowesc)/model_bodies_pars$low_run)*100
+lowharrate.quant <- t(apply(lowharrate, 2, quantile, probs=c(0.025,0.5,0.975)))
+totharrate <- ((canhar + midhar + lowhar)/(canrun + midrun + lowrun))*100
+totharrate.quant <- t(apply(totharrate, 2, quantile, probs=c(0.025,0.5,0.975)))
+
+#rm(canhar, midhar, lowhar, tothar, canharrate, midharrate, lowharrate, totharrate)
+
+#max(canharrate.quant[,2]); min(canharrate.quant[,2]); median(canharrate.quant[,2])
+#max(midharrate.quant[,2]); min(midharrate.quant[,2]); median(midharrate.quant[,2])
+#max(lowharrate.quant[,2]); min(lowharrate.quant[,2]); median(lowharrate.quant[,2])
+
+#dataframe
+counts.sum <- rbind(canhar.quant, midhar.quant, lowhar.quant, tothar.quant, canharrate.quant,
+                    midharrate.quant, lowharrate.quant, totharrate.quant)
+colnames(counts.sum) <- c("low95", "med50", "hi95")
+harvest.fig <- data.frame(year = rep(sr_years,8), 
+                         stock = rep(c("Canada", "Middle", "Lower", "Total"), 
+                                  each = nyrs), 
+                         count = rep(c("Harvest", "Harvest rate"), 
+                                  each = nyrs*4), 
+                         counts.sum, stringsAsFactors = TRUE)
+
+
+harvest.fig$stock <- factor(harvest.fig$stock, levels = c("Canada", "Middle", "Lower", "Total"))
+
+
+b <- ggplot(harvest.fig %>% filter(count=="Harvest rate")) + 
+  geom_ribbon(aes(x = year, ymin = low95, ymax = hi95, col = count, fill = count), alpha=0.5) +
+  geom_line(aes(x = year, y = med50, col = count), size = 1) + 
+  ylab("Harvest rate (%)") +
+  xlab("Year") +
+  scale_color_manual(values=c('#999999'))+
+  scale_fill_manual(values=c('#999999')) +
+  scale_y_continuous(position = "right") +
+  theme_bw() +
+  theme(legend.position = "none",
+        plot.margin = margin(40,20,0.5,0.5)) +
+  facet_wrap(~stock, nrow=4)
+
+counts.fig$stock <- factor(counts.fig$stock, levels = c("Canada", "Middle", "Lower", "Total"))
+
+a <- ggplot(counts.fig) + 
+  geom_ribbon(aes(x = year, ymin = low95, ymax = hi95, col = count, fill = count), alpha=0.5) +
+  geom_line(aes(x = year, y = med50, col = count), size = 1) + 
+  ylab("Fish (000s)") +
+  xlab("Year") +
+  scale_color_manual(values=c('#999999','#E69F00')) +
+  scale_fill_manual(values=c('#999999', '#E69F00')) +
+  theme_bw() +
+  theme(legend.position = "top",
+        legend.title = element_blank(),
+        plot.margin = margin(0.5,20,0.5,0.5)) +
+  facet_wrap(~stock, nrow=4, scales = "free_y")
+
+g <- ggarrange(a,b, 
+               ncol = 2, 
+               labels = c("a", "b"),
+               widths = c(1, 1),
+               label.y = c(0.935,0.935),
+               label.x = c(0,-0.08))
+
+print(g)
+```
+
+**Figure 5**. Reconstructed (a) harvest rates and (b) total run size and spawning escapements of Yukon River Chinook salmon by stock and combined. Thick lines are medians and shaded areas indicate 95% credible intervals.
+
+## Figure 6
+
+```{r fig6, echo=FALSE, fig.align="center", fig.height=2.7, fig.width=8.2, warning=FALSE}
+
+spwn <- exp(model_bodies_pars$lnS)
+spwn.quant <- apply(spwn, 2, quantile, probs=c(0.05,0.5,0.95))[,1:(length(sr_years)-4)]
+
+rec <-exp(model_bodies_pars$lnR)
+rec.quant <- apply(rec, 2, quantile, probs=c(0.05,0.5,0.95))[,8:dim(model_bodies_pars$R)[2]]
+
+rps <- rec[,8:dim(model_bodies_pars$R)[2]]/spwn[,1:(length(sr_years)-4)]
+rps.quant <- apply(rps, 2, quantile, probs=c(0.025,0.5,0.975))
+
+brood_t <- as.data.frame(cbind(sr_years[1:(length(sr_years)-4)],t(spwn.quant), t(rec.quant), t(rps.quant)))
+colnames(brood_t) <- c("BroodYear","S_lwr","S_med","S_upr","R_lwr","R_med","R_upr","RpS_lwr","RpS_med","RpS_upr")
+
+brood_t <- as.data.frame(brood_t)
+
+# SR relationship
+spw <- seq(0,max(brood_t[,4]),length.out=100)
+SR_pred <- matrix(NA,100,max_samples)
+
+for(i in 1:max_samples){
+  r <- sample(seq(1,max_samples),1,replace=T)
+  a <- model_bodies_pars$lnalpha_c[r]
+  b <- model_bodies_pars$beta[r]
+  SR_pred[,i] <- (exp(a)*spw*exp(-b*spw))
+}
+
+SR_pred <- cbind(spw,t(apply(SR_pred,c(1),quantile,probs=c(0.05,0.5,0.95),na.rm=T)))
+colnames(SR_pred) <- c("Spawn", "Rec_lwr","Rec_med","Rec_upr")
+SR_pred <- as.data.frame(SR_pred)
+
+a <- ggplot() +
+  geom_ribbon(data = SR_pred, aes(x = Spawn, ymin = Rec_lwr, ymax = Rec_upr),
+              fill = "grey80", alpha=0.5, linetype=2, colour="gray46") +
+  geom_line(data = SR_pred, aes(x = Spawn, y = Rec_med), color="black", size = 1) +
+  geom_errorbar(data = brood_t, aes(x= S_med, y = R_med, ymin = R_lwr, ymax = R_upr),
+                colour="grey", width=0, size=0.3) +
+  geom_errorbarh(data = brood_t, aes(x= S_med, y = R_med, xmin = S_lwr, xmax = S_upr),
+                 height=0, colour = "grey", height = 0, size = 0.3) +
+  geom_point(data = brood_t, aes(x = S_med, y = R_med, color=BroodYear, width = 0.9), size = 3)+
+  coord_cartesian(xlim=c(0, 130000), ylim=c(0,max(brood_t[,7]))) +
+  scale_colour_viridis_c()+
+  xlab("Spawners") +
+  ylab("Recruits") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.key.size = unit(0.4, "cm"),
+        legend.title = element_text(size=9),
+        legend.text = element_text(size=8))+
+  geom_abline(intercept = 0, slope = 1,col="dark grey")
+
+pred <-model_bodies_pars$lnalpha_y
+pred.quant <- apply(pred, 2, quantile, probs=c(0.025,0.25,0.5,0.75,0.975), na.rm=TRUE)[,8:dim(model_bodies_pars$lnalpha_y)[2]]
+
+log_prod_t <- as.data.frame(cbind(sr_years[1:(length(sr_years)-4)], t(pred.quant)))
+colnames(log_prod_t) <- c("year","lwr","midlwr","mid","midupper","upper")
+
+# Plot
+b <- ggplot(brood_t, aes(x=BroodYear, y = RpS_med), show.legend = F) +
+  geom_line(show.legend = F, color = rgb(1,0,0, alpha=0.2), lwd = 1.5) + 
+  geom_ribbon(aes(ymin = RpS_lwr, ymax =RpS_upr), show.legend = F, fill = rgb(1,0,0, alpha=0.2)) +
+  xlab("Brood year") +
+  ylab("Recruits-per-spawner") +
+  theme(legend.position = "none") +
+  geom_abline(intercept = 1, slope = 0,col="dark grey", lty=2)+
+  theme_bw()
+
+g <- ggarrange(a,b,nrow =1, labels = c("a", "b"), widths = c(0.9,1))
+print(g)
+
+```
+
+**Figure 6**. Spawner-recruitment relationship and productivity over time.(a) Relationship between recruitment and spawner abundance for Canadian-origin Yukon Chinook salmon from 1982 to 2019. Error bars and grey band are 95% credible intervals, thick black line is the expected relationship. (b) Approximate annual estimates of time-varying productivity (sum ln(a) and log residuals exponentiated) with 50th and 95th credible intervals dashed line at replacement.
+
+## Figure 7
+
+```{r fig7, echo=FALSE, fig.align="center", warning=FALSE, fig.height=4.5, fig.width=4.5 }
+
+benchmarks <- cbind(model_bodies_pars$Smsy_Sch_corr, model_bodies_pars$S_max, model_bodies_pars$S_eq_c,bench[,1])
+benchmarks <- as.data.frame(benchmarks)
+colnames(benchmarks) <- c("Smsy", "Smsr", "Seq", "Sgen")
+
+# subset for plotting purposes, need to come up with better way to set axis limits by facet in ggplot. 
+benchmarks <- subset(benchmarks,Sgen < 50000)
+benchmarks <- subset(benchmarks,Smsy < 100000)
+benchmarks <- subset(benchmarks,Smsr < 200000)
+benchmarks <- subset(benchmarks,Seq < 275000)
+
+
+benchmarksLong <- benchmarks%>%
+  pivot_longer(everything(), names_to = "benchmark", values_to="posteriors") %>% 
+  mutate(posteriors = posteriors/1000)
+
+my_labeller <- as_labeller(c(Smsy="S[MSY]", Smsr="S[MSR]", Sgen="S[GEN]", Seq="S[EQ]"),
+                           default = label_parsed)
+
+median_bench <- benchmarksLong %>% 
+  group_by(benchmark) %>% 
+  summarize(Median = median(posteriors)) 
+
+ggplot(benchmarksLong, aes(x=posteriors)) + 
+  geom_density(fill="light grey")+
+  facet_wrap(~benchmark, scales = "free", labeller = my_labeller)+
+    xlab("Spawners (000s)") +
+  ylab("") +
+  geom_vline(data = median_bench,aes(xintercept = Median, group = benchmark), colour = 'red')+
+  theme_bw() +
+  scale_x_continuous(limits=c(0, NA))+
+  theme(axis.text.y = element_blank(),
+        axis.ticks.y = element_blank())
+```
+
+**Figure 7**. Posterior distributions of benchmarks including equilibrium spawning abundance (S~EQ~ ), spawning abundance required to recover to S~MSY~ within one generation under equilibrium conditions in the absence of fishing (S~GEN~ ), spawning abundance expected to maximize recruitment (S~MSR~), and spawning abundance expected to maximize sustainable yield (S~MSY~ ).Vertical red lines denote posterior means.
+
+## Figure 8
+
+```{r fig8, echo=FALSE, fig.align = "center", fig.height=7}
+spw <- seq(0,max(brood_t[,4]),length.out=100)
+
+Profiles <- array(NA, dim = c(length(spw),max_samples,9))
+
+for(i in 1:max_samples){
+  r <- sample(seq(1,max_samples),1,replace=T)
+  a <- model_bodies_pars$lnalpha_c[r]
+  b <- model_bodies_pars$beta[r]
+  S_msy_c <- model_bodies_pars$Smsy_Sch_corr[r]
+  R_msy_c <- S_msy_c*exp(a-b*S_msy_c)
+  msy_c <- R_msy_c - S_msy_c
+  U_max_c <- 1-(1/exp(a))
+  Umsy_Sch_corr <- model_bodies_pars$Umsy_Sch_corr[r]
+
+  for(j in 1:length(spw)){
+    spw_star <- spw[j]
+    R_star <- spw_star*exp(a-b*spw_star)
+    R_star[is.nan(R_star)] <- 0
+    sus_yield <- R_star - spw_star
+    U <- ifelse(sus_yield/R_star < 0, 1, sus_yield/R_star)
+    Profiles[j,i,1] <- ifelse(sus_yield > 0.9*msy_c, 1, 0) # probability yield > 90% of MSY
+    Profiles[j,i,2] <- ifelse(sus_yield > 0.8*msy_c, 1, 0) # probability yield > 80% of MSY
+    Profiles[j,i,3] <- ifelse(sus_yield > 0.7*msy_c, 1, 0) # probability yield > 70% of MSY
+    Profiles[j,i,4] <- ifelse(R_star > 0.9*R_msy_c, 1, 0) # probability recruitment > 90% of MSR
+    Profiles[j,i,5] <- ifelse(R_star > 0.8*R_msy_c, 1, 0) # probability recruitment > 80% of MSR
+    Profiles[j,i,6] <- ifelse(R_star > 0.7*R_msy_c, 1, 0) # probability recruitment > 70% of MSR
+    if(sus_yield < (0.9*msy_c) & spw_star < S_msy_c){
+      Profiles[j,i,7] <- 1
+    } else {
+      Profiles[j,i,7] <- 0
+      }
+    if(sus_yield < (0.8*msy_c) & spw_star < S_msy_c){
+      Profiles[j,i,8] <- 1
+    } else {
+      Profiles[j,i,8] <- 0
+      }
+    if(sus_yield < (0.7*msy_c) & spw_star < S_msy_c){
+      Profiles[j,i,9] <- 1
+    } else {
+      Profiles[j,i,9] <- 0
+      }    
+        }
+}
+
+profiles_median <- cbind(spw,apply(Profiles,c(1,3),mean, na.rm=T))
+
+colnames(profiles_median) <- c("Spawners","90% MSY","80% MSY","70% MSY", "90% MSR","80% MSR","70% MSR", "90% MSY ", "80% MSY ", "70% MSY ")
+profiles_median <- as.data.frame(profiles_median)
+
+long_yield_profiles <- profiles_median%>%
+  select("Spawners","90% MSY","80% MSY","70% MSY")%>%
+  pivot_longer(!Spawners, names_to = "Metric", values_to = "perc")
+
+a <- ggplot(long_yield_profiles, aes(x = Spawners, y = perc, group = Metric, color = Metric)) +
+      geom_line(size = 1.5) +
+      scale_color_viridis(discrete = TRUE) +
+      ylab("Probability") +
+      theme(legend.position = "none") +
+      theme_bw() +
+      theme(axis.title.x = element_blank(),
+      axis.text.x = element_blank(),
+      legend.title = element_blank()) + 
+  geom_rug(data = brood_t,
+           aes(x = S_med),
+           inherit.aes = FALSE,
+           sides="b")
+
+long_rec_profiles <- profiles_median%>%
+  select("Spawners","90% MSR","80% MSR","70% MSR")%>%
+  pivot_longer(!Spawners, names_to = "Metric", values_to = "perc")
+
+b <- ggplot(long_rec_profiles, aes(x = Spawners, y = perc, group = Metric, color = Metric)) +
+      geom_line(size = 1.5) +
+      scale_color_viridis(discrete = TRUE) +
+      ylab("Probability") +
+      theme(legend.position = "none") +
+      theme_bw() +
+      theme(axis.title.x = element_blank(),
+      axis.text.x = element_blank(),
+      legend.title = element_blank()) + 
+  geom_rug(data = brood_t,
+           aes(x = S_med),
+           inherit.aes = FALSE,
+           sides="b")
+
+long_overfish_profiles <- profiles_median%>%
+  select("Spawners", "90% MSY ", "80% MSY ", "70% MSY ")%>%
+  pivot_longer(!Spawners, names_to = "Objective", values_to = "perc")
+
+c <- ggplot(long_overfish_profiles, aes(x = Spawners, y = perc, group = Objective, color = Objective)) +
+  geom_line(size = 1.5) +
+  scale_color_viridis(discrete = TRUE) +
+  xlab("Spawners") +
+  ylab("Probability ") +
+  theme(legend.position = "none") +
+  theme_bw() +
+  theme(legend.title = element_blank()) + 
+  geom_rug(data = brood_t,
+           aes(x = S_med),
+           inherit.aes = FALSE,
+           sides="b")
+
+g <- ggarrange(a,b,c,nrow =3, labels = c("a", "b", "c"), heights = c(0.75,0.75,0.9))
+print(g)
+```
+
+**Figure 8**. Optimal yield and recruitment probability profiles. (a) Optimal yield profile showing the probability that a given spawner abundance is expected to achieve 70%, 80%, or 90% of maximum sustainable yield (MSY). (b) Optimal recruitment profile showing the probability that a given spawner abundance is expected to achieve 70%, 80%, or 90% of maximum sustainable recruitment (S~MSR~). Historic spawning escapements are shown along x-axis. Overfishing profile, calculated as 1 – P(SY > X% of MSY) at S < SMSY , and 0 at S > SMSY , showing the probability that sustained yield (SY) is reduced to less than a percentage (70%, 80%, or 90%) of MSY given a fixed level of escapement.
+
+## Figure 9
+
+```{r fig9, echo=FALSE, fig.align = "center"}
+fem_age_comp <- fem_age_comps[,c(1,3:6)]%>%
+  group_by(sampleYear) %>%
+  mutate(total_prop=sum(age_4,age_5,age_6,age_7),
+         age4=age_4/total_prop,
+         age5=age_5/total_prop,
+         age6=age_6/total_prop,
+         age7=age_7/total_prop)%>%
+  select(sampleYear,age4, age5, age6, age7)%>%
+  rename(Four = age4, Five = age5, Six = age6, Seven = age7)%>%
+  pivot_longer(!sampleYear , names_to = "Age",
+              values_to = "prop")
+
+fem_age_comp$age_f <- factor(fem_age_comp$Age, levels = c("Four", "Five", "Six", "Seven"))
+
+a <- ggplot(fem_age_comp, aes(fill=age_f, y=prop, x=sampleYear)) + 
+        geom_bar(position="stack", stat="identity")+
+      xlab("Year") +
+      ylab("Proportion") +
+      theme_bw()+
+      scale_fill_viridis_d(name = "Age") +
+      theme(legend.key.size = unit(0.4, "cm"),
+        legend.title = element_text(size=9),
+        legend.text = element_text(size=8),
+        legend.position="top")
+
+
+prop_females <- rowSums(fem_age_comps[,3:6])
+
+sex_ratio<-cbind(seq(1981,2019),prop_females)
+colnames(sex_ratio)<-c("Year","prop_fem")
+sex_ratio<-as.data.frame(sex_ratio)
+
+b <- ggplot(sex_ratio, aes(x = Year, y = prop_fem)) +
+      geom_smooth(method="lm", color="grey") +
+      geom_point(size=1)+ 
+      xlab("Year") +
+      ylab("Proportion female") +
+      coord_cartesian(ylim=c(0,1)) +
+      theme_bw() +
+      theme(plot.margin = margin(0.5,20,0.5,20))
+
+laa <- as.data.frame(fem_len_comp)%>%
+  select(sampleYear,age_4, age_5, age_6, age_7)%>%
+  rename(Four = age_4, Five = age_5, Six = age_6, Seven = age_7)%>%
+  pivot_longer(!sampleYear , names_to = "Age",
+              values_to = "length") 
+
+
+laa$age_f <- factor(laa$Age, levels = c("Four", "Five", "Six", "Seven"))
+
+c <- ggplot(laa, aes(x = sampleYear, y = length)) +
+      geom_smooth(method="lm", color="grey") +
+      geom_point(size=1)+ 
+      xlab("Year") +
+      ylab("Female length \n  (mm; MEFL)") +
+      theme_bw()+
+      facet_wrap(~age_f) +
+      scale_x_continuous(breaks=c(1985, 1995, 2005, 2015)) +
+      theme(strip.text.x = element_text(size=8),
+            plot.margin = margin(0.5,10,0.5,0.5))
+
+
+spwn <- exp(model_bodies_pars$lnS)
+spwn.quant.full <- apply(spwn, 2, quantile, probs=c(0.5))
+spwn.quant <- apply(spwn, 2, quantile, probs=c(0.025,0.5,0.975))[,1:(length(sr_years)-4)]
+
+fem_spwn <- spwn.quant.full*(sex_ratio$prop_fem)
+#fem_age_comp_wide <- pivot_wider(fem_age_comp[,-4],names_from = "Age", values_from = "prop")
+#fem_age_comps_1981 <-  fem_age_comps[1,]; fem_age_comps_1981$sampleYear=1981
+#fem_age_comps_1984 <-  fem_age_comps[2,]; fem_age_comps_1984$sampleYear=1984
+#fem_age_comps <- rbind(fem_age_comps_1981,fem_age_comps[1:2,],fem_age_comps_1984,fem_age_comps[3:39,] )[1:39,]
+
+fem_length <- as.data.frame(fem_len_comp)%>%
+  select(sampleYear,age_4, age_5, age_6, age_7)%>%
+  rename(Four = age_4, Five = age_5, Six = age_6, Seven = age_7)
+
+# loop through years and calculate number of spawners, total eggs, or total egg mass, by age
+fem_spwn_age <- matrix(NA,39,4)
+fem_spwn_eggs <- fem_spwn_age
+fem_spwn_mass <- fem_spwn_age
+
+for(i in 1:39){
+  fem_spwn_age[i,1:4] <- as.numeric(spwn.quant.full[i]*fem_age_comps[i,3:6])
+  fem_spwn_eggs[i,1:4] <- as.numeric((9.35e-4*fem_length[i,2:5]^2.36)*fem_spwn_age[i,1:4])
+  fem_spwn_mass[i,1:4] <- as.numeric((8.71e-12*fem_length[i,2:5]^4.83)*fem_spwn_age[i,1:4])
+}
+
+total_egg_no <- cbind(seq(1981,2019),rowSums(fem_spwn_eggs),rep("Eggs",39)); colnames(total_egg_no)<-c("year","quantity","Metric")
+total_egg_mass <- cbind(seq(1981,2019),rowSums(fem_spwn_mass),rep("Egg mass",39)); colnames(total_egg_mass)<-c("year","quantity","Metric")
+total_spawners <- cbind(seq(1981,2019),spwn.quant.full,rep("Total spawners",39)); colnames(total_spawners)<-c("year","quantity","Metric")
+#total_female_spawners <- cbind(seq(1981,2019),fem_spwn,rep("Female spawners",39)); colnames(total_female_spawners)<-c("year","quantity","metric")
+
+esc_qual_data <- rbind(total_egg_no,total_egg_mass,total_spawners)
+xx <-as.data.frame(esc_qual_data)
+xx$year <- as.numeric(xx$year)
+xx$quantity <- as.numeric(xx$quantity)
+
+# norm_rep_out <- xx %>%
+#   group_by(Metric) %>%
+#   mutate(scaled_output = as.vector(scale(quantity)))
+# 
+# d <- ggplot(norm_rep_out,aes(x=year, y=scaled_output, color=Metric))+
+#       geom_line(aes(x=year, y=scaled_output, color=Metric)) +
+#       scale_color_viridis(discrete=TRUE) +
+#       theme_bw() +
+#       theme(panel.grid.major = element_blank(),
+#         panel.grid.minor = element_blank(),
+#         legend.key.size = unit(0.4, "cm"),
+#         legend.title = element_text(size=9),
+#         legend.text = element_text(size=8),
+#         legend.position="top")+
+#       ylab("Standarized \n reproductive output")+
+#       xlab("Year")
+
+total_spawners <-as.data.frame(total_spawners)
+total_spawners$year <- as.numeric(total_spawners$year)
+total_spawners$quantity <- as.numeric(total_spawners$quantity)
+
+per_cap_egg <-as.data.frame(total_egg_no)
+per_cap_egg$year <- as.numeric(per_cap_egg$year)
+per_cap_egg$quantity <- as.numeric(per_cap_egg$quantity)/total_spawners$quantity
+
+per_cap_mass <-as.data.frame(total_egg_mass)
+per_cap_mass$year <- as.numeric(per_cap_mass$year)
+per_cap_mass$quantity <- as.numeric(per_cap_mass$quantity)/total_spawners$quantity
+
+esc_qual_data_per_cap <- rbind(per_cap_egg,per_cap_mass)
+
+norm_per_cap_rep_out <- esc_qual_data_per_cap %>%
+  group_by(Metric) %>%
+  mutate(scaled_output = as.vector(scale(quantity)))
+
+d <- ggplot(norm_per_cap_rep_out,aes(x=year, y=scaled_output, color=Metric))+
+  geom_line(aes(x=year, y=scaled_output, color=Metric)) +
+  scale_color_viridis(discrete=TRUE) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.key.size = unit(0.4, "cm"),
+        legend.title = element_text(size=9),
+        legend.text = element_text(size=8),
+        legend.position="top")+
+  ylab("Scaled per capita \n reproductive output")+
+  xlab("Year")
+
+g <- ggarrange(b,c,a,d, 
+               labels = c("a", "b","c", "d"),
+               heights = c(0.8,1))
+print(g)
+
+```
+
+**Figure 9**. Female Chinook salmon age, sex, and size composition over time and implications for reproductive output.(a) Proportion of returning Chinook salmon that are female. (b) Average female length at age with years without data infilled with last year with estimates of length. (c) Proportion of females returning to spawn as 4-7 year olds. (d) Total reproductive output for three separate metrics where egg mass and eggs are based on the age, sex, length information in panels a-c ,length-fecundity/egg mass relationships, and estimates of total spawning escapement from the base case integrated RR-SRA model. Note: 3 and 8 year olds were combined 4 and 7 year olds respectively, and age 4 female lengths are based on very small sample sizes in most years and so should be interpreted with caution, however, because 4 year old females make up so little of the spawning population these estimates have little influence on time series of reproductive output.
+
+
+## Figure 10
+
+```{r fig10, echo=FALSE, fig.align = "center", fig.height=3.5, fig.width=6.2}
+## fish numbers brood tale
+sr_years <- stan.data.bodies$years
+spwn_bodies <- exp(model_bodies_pars$lnS)
+spwn.bodies.quant <- apply(spwn_bodies, 2, quantile, probs=c(0.025,0.5,0.975))[,1:(length(sr_years)-4)]
+
+rec_bodies <-exp(model_bodies_pars$lnR)
+rec.bodies.quant <- apply(rec_bodies, 2, quantile, probs=c(0.025,0.5,0.975))[,8:dim(model_bodies_pars$R)[2]]
+
+brood_t_bodies <- as.data.frame(cbind(sr_years[1:(length(sr_years)-4)],t(spwn.bodies.quant), t(rec.bodies.quant)))
+colnames(brood_t_bodies) <- c("BroodYear","S_lwr","S_med","S_upr","R_lwr","R_med","R_upr")
+
+brood_t_bodies <- as.data.frame(brood_t_bodies)
+brood_t_bodies$metric<-"Spawners"
+
+spw.bodies <- seq(0,max(brood_t_bodies[,4]),length.out=1000)
+SR_pred_bodies <- matrix(NA,1000,10000)
+
+for(i in 1:10000){
+  r <- sample(seq(1,10000),1,replace=T)
+  #a <- model_bodies_pars$lnalpha[r]
+  a <- model_bodies_pars$lnalpha[r] + (model_bodies_pars$sigma_R[r] * model_bodies_pars$sigma_R[r])/2/(1-model_bodies_pars$phi[r] * model_bodies_pars$phi[r])
+  b <- model_bodies_pars$beta[r]
+  SR_pred_bodies[,i] <- (exp(a)*spw.bodies*exp(-b*spw.bodies))
+}
+
+SR_pred_bodies <- cbind(spw.bodies,t(apply(SR_pred_bodies,c(1),quantile,probs=c(0.05,0.5,0.95),na.rm=T)))
+colnames(SR_pred_bodies) <- c("Spawn", "Rec_lwr","Rec_med","Rec_upr")
+SR_pred_bodies <- as.data.frame(SR_pred_bodies)
+SR_pred_bodies$metric<-"Spawners"
+
+SR_pred_bodies$SpawnersRecent <- SR_pred_bodies$Spawn
+SR_pred_bodies$SpawnersEarly <- SR_pred_bodies$Spawn
+SR_pred_bodies$SpawnersAvg <- SR_pred_bodies$Spawn
+
+## egg number brood table
+sr_years <- stan.data.egg$years
+spwn_egg <- exp(model_egg_pars$lnE)
+spwn.egg.quant <- apply(spwn_egg, 2, quantile, probs=c(0.025,0.5,0.975))[,1:(length(sr_years)-4)]
+
+rec_egg <-exp(model_egg_pars$lnR)
+rec.egg.quant <- apply(rec_egg, 2, quantile, probs=c(0.025,0.5,0.975))[,8:dim(model_egg_pars$R)[2]]
+
+brood_t_egg <- as.data.frame(cbind(sr_years[1:(length(sr_years)-4)],t(spwn.egg.quant), t(rec.egg.quant)))
+colnames(brood_t_egg) <- c("BroodYear","S_lwr","S_med","S_upr","R_lwr","R_med","R_upr")
+
+brood_t_egg <- as.data.frame(brood_t_egg)
+brood_t_egg$metric<-"Eggs"
+
+spw.egg <- seq(0,max(brood_t_egg[,4]),length.out=1000)
+SR_pred_egg <- matrix(NA,1000,10000)
+
+for(i in 1:10000){
+  r <- sample(seq(1,10000),1,replace=T)
+  #a <- model_egg_pars$lnalpha[r]
+  a <- model_egg_pars$lnalpha[r] + (model_egg_pars$sigma_R[r] * model_egg_pars$sigma_R[r])/2/(1-model_egg_pars$phi[r] * model_egg_pars$phi[r])
+  b <- model_egg_pars$beta[r]
+  SR_pred_egg[,i] <- (exp(a)*spw.egg*exp(-b*spw.egg))
+}
+
+SR_pred_egg <- cbind(spw.egg,t(apply(SR_pred_egg,c(1),quantile,probs=c(0.05,0.5,0.95),na.rm=T)))
+colnames(SR_pred_egg) <- c("Spawn", "Rec_lwr","Rec_med","Rec_upr")
+SR_pred_egg <- as.data.frame(SR_pred_egg)
+SR_pred_egg$metric<-"Eggs"
+
+# add back-calculated spawners
+recent_egg <- getAvgEq("eggs", model_egg_pars,stan.data.egg, 29, 39)
+early_egg <- getAvgEq("eggs", model_egg_pars,stan.data.egg, 1, 10)
+avg_egg <- getAvgEq("eggs", model_egg_pars,stan.data.egg, 1, 39)
+
+egg_spwn<-repo_unit_to_spwn(recent_egg$avgPropFem,recent_egg$avgMetric,spw.egg)
+SR_pred_egg$SpawnersRecent <- egg_spwn
+
+egg_spwn<-repo_unit_to_spwn(early_egg$avgPropFem,early_egg$avgMetric,spw.egg)
+SR_pred_egg$SpawnersEarly <- egg_spwn
+
+egg_spwn<-repo_unit_to_spwn(avg_egg$avgPropFem,avg_egg$avgMetric,spw.egg)
+SR_pred_egg$SpawnersAvg <- egg_spwn
+
+## egg mass brood table
+sr_years <- stan.data.mass$years
+spwn_mass <- exp(model_mass_pars$lnEM)
+spwn.mass.quant <- apply(spwn_mass, 2, quantile, probs=c(0.025,0.5,0.975))[,1:(length(sr_years)-4)]
+
+rec_mass <-exp(model_mass_pars$lnR)
+rec.mass.quant <- apply(rec_mass, 2, quantile, probs=c(0.025,0.5,0.975))[,8:dim(model_mass_pars$R)[2]]
+
+brood_t_mass <- as.data.frame(cbind(sr_years[1:(length(sr_years)-4)],t(spwn.mass.quant), t(rec.mass.quant)))
+colnames(brood_t_mass) <- c("BroodYear","S_lwr","S_med","S_upr","R_lwr","R_med","R_upr")
+
+brood_t_mass <- as.data.frame(brood_t_mass)
+brood_t_mass$metric<-"Egg mass"
+
+spw.mass <- seq(0,max(brood_t_mass[,4]),length.out=1000)
+SR_pred_mass <- matrix(NA,1000,10000)
+
+for(i in 1:10000){
+  r <- sample(seq(1,10000),1,replace=T)
+  #a <- model_mass_pars$lnalpha[r]
+  a <- model_mass_pars$lnalpha[r] + (model_mass_pars$sigma_R[r] * model_mass_pars$sigma_R[r])/2/(1-model_mass_pars$phi[r] * model_mass_pars$phi[r])
+  b <- model_mass_pars$beta[r]
+  SR_pred_mass[,i] <- (exp(a)*spw.mass*exp(-b*spw.mass))
+}
+
+SR_pred_mass <- cbind(spw.mass,t(apply(SR_pred_mass,c(1),quantile,probs=c(0.05,0.5,0.95),na.rm=T)))
+colnames(SR_pred_mass) <- c("Spawn", "Rec_lwr","Rec_med","Rec_upr")
+SR_pred_mass <- as.data.frame(SR_pred_mass)
+SR_pred_mass$metric<-"Egg mass"
+
+# add back-calculated spawners
+recent_mass <- getAvgEq("mass", model_mass_pars,stan.data.mass, 29, 39)
+early_mass <- getAvgEq("mass", model_mass_pars,stan.data.mass, 1, 10)
+avg_mass <- getAvgEq("mass", model_mass_pars,stan.data.mass, 1, 39)
+
+mass_spwn<-repo_unit_to_spwn(recent_mass$avgPropFem,recent_mass$avgMetric,spw.mass)
+SR_pred_mass$SpawnersRecent <- mass_spwn
+
+mass_spwn<-repo_unit_to_spwn(early_mass$avgPropFem,early_mass$avgMetric,spw.mass)
+SR_pred_mass$SpawnersEarly <- mass_spwn
+
+mass_spwn<-repo_unit_to_spwn(avg_mass$avgPropFem,avg_mass$avgMetric,spw.mass)
+SR_pred_mass$SpawnersAvg <- mass_spwn
+
+## merge
+SR_pred <- rbind(SR_pred_bodies,SR_pred_egg,SR_pred_mass)
+SR_pred$YieldEarly <- SR_pred$Rec_med-SR_pred$SpawnersEarly
+SR_pred$YieldEarlyUpr <- SR_pred$Rec_upr-SR_pred$SpawnersEarly
+SR_pred$YieldEarlyLwr <- SR_pred$Rec_lwr-SR_pred$SpawnersEarly
+
+SR_pred$YieldRecent <- SR_pred$Rec_med-SR_pred$SpawnersRecent 
+SR_pred$YieldRecentUpr <- SR_pred$Rec_upr-SR_pred$SpawnersRecent 
+SR_pred$YieldRecentLwr <- SR_pred$Rec_lwr-SR_pred$SpawnersRecent 
+
+SR_pred$YieldAvg <- SR_pred$Rec_med-SR_pred$SpawnersAvg 
+SR_pred$YieldAvgUpr <- SR_pred$Rec_upr-SR_pred$SpawnersAvg 
+SR_pred$YieldAvgLwr <- SR_pred$Rec_lwr-SR_pred$SpawnersAvg 
+
+brood_t <- rbind(brood_t_bodies,brood_t_egg,brood_t_mass)
+
+
+early_yield <- SR_pred[,c(5,6,12:14)]
+early_yield$period <- "Recent"
+colnames(early_yield) <- c("Metric","Spawn","Yield", "YieldLwr","YieldUpr","Period")
+
+recent_yield <- SR_pred[,c(5,7,9:11)]
+recent_yield$period <- "Early"
+colnames(recent_yield) <- c("Metric","Spawn","Yield", "YieldLwr","YieldUpr","Period")
+
+eq_yield1 <- rbind(early_yield,recent_yield)
+eq_yield2 <- subset(eq_yield1, Metric!="Spawners")
+eq_yield3 <- subset(recent_yield, Metric=="Spawners"); eq_yield3$Period <- "Average"
+eq_yield <- rbind(eq_yield2,eq_yield3)
+
+mycolors <- c("black",rev(viridis(2)))
+
+early_rec <- SR_pred[,c(2:5,7)]
+early_rec$period <- "Early"
+colnames(early_rec) <- c("RecLwr","RecMed","RecUpr","Metric","Spawn","Period")
+
+recent_rec <- SR_pred[,c(2:6)]
+recent_rec$period <- "Recent"
+colnames(recent_rec) <- c("RecLwr","RecMed","RecUpr","Metric","Spawn","Period")
+
+rec_yield1 <- rbind(recent_rec,early_rec)
+rec_yield2 <- subset(rec_yield1, Metric!="Spawners")
+rec_yield3 <- subset(recent_rec, Metric=="Spawners"); rec_yield3$Period <- "Average"
+rec_yield <- rbind(rec_yield2,rec_yield3)
+
+rec_yield$type <- "Recruitment"; colnames(rec_yield)[1:3] <- c("lwr", "med", "upr")
+eq_yield$type <- "Yield"; colnames(eq_yield)[3:5] <- c("med", "lwr", "upr")
+
+yield_rec <- rbind(eq_yield,rec_yield[,c(4,5,2,1,3,6,7)])
+
+yield_rec$Metric <- factor(yield_rec$Metric, levels = c("Spawners", "Eggs", "Egg mass"))
+
+rec <- yield_rec %>% filter(type == "Recruitment")
+yield <- yield_rec %>% filter(type == "Yield")
+
+a <- ggplot() +
+      geom_ribbon(data = yield, aes(x = Spawn/1000, ymin = lwr/1000, ymax = upr/1000,fill =Period),
+              alpha=0.3, linetype=2) +
+      geom_line(data = yield, aes(x = Spawn/1000, y = med/1000,color=Period), size = 1) +
+      coord_cartesian(ylim=c(0,175), xlim=c(0,125)) +
+      facet_wrap(~Metric)+
+      scale_fill_manual(values = mycolors)+ # Specify color to the fill aesthetics
+      scale_color_manual(values = mycolors)+ # Specify color to the fill aesthetics
+      xlab("Spawners (000s)") +
+      ylab("Yield (000s)") +
+      theme_bw() +
+      theme(axis.title.x = element_blank(),
+        axis.text.x = element_blank(),
+        legend.key.size = unit(0.4, "cm"),
+        legend.title = element_text(size=9),
+        legend.text = element_text(size=8))
+
+b <- ggplot() +
+      geom_ribbon(data = rec, aes(x = Spawn/1000, ymin = lwr/1000, ymax = upr/1000,fill =Period),
+              alpha=0.3, linetype=2) +
+      geom_line(data = rec, aes(x = Spawn/1000, y = med/1000,color=Period), size = 1) +
+      coord_cartesian(ylim=c(0,200), xlim=c(0,125)) +
+      facet_wrap(~Metric)+
+      scale_fill_manual(values = mycolors)+ # Specify color to the fill aesthetics
+      scale_color_manual(values = mycolors)+ # Specify color to the fill aesthetics
+      xlab("Spawners (000s)") +
+      ylab("Recruitment (000s)") +
+      theme_bw()+
+      theme(legend.key.size = unit(0.4, "cm"),
+        legend.title = element_text(size=9),
+        legend.text = element_text(size=8))
+
+g <- ggarrange(a,b,
+               nrow =2, 
+               labels = c("a", "b"), 
+               common.legend = TRUE,
+               legend = "right",
+               heights = c(0.815,1),
+               label.y = c(1.05,1.05))
+
+print(g)
+
+```
+
+**Figure 10**. Expected (a) yield (i.e., surplus production) and (b) recruitment across a range of spawner abundances based on spawner-recruitment models fit to three alternative measures of reproductive output (Total egg mass, total eggs, or total spawners). Shown is median +/- 95% credible intervals. The time period represents which years were used to calculate the average demographic qualities (sex-ratio, female age, and female length at age) used in equilibrium calculations; "Recent" corresponds to 2009-2019 and "Early" corresponds to 1982-1992.
+
+```{r}
+# Variance in log R/S explained by alternative measures of reproductive output
+
+bodies <- SR_pred%>%filter(metric=="Spawners")
+
+bodies_lm <- lm(log(R_med/S_med)~S_med, data=brood_t%>%filter(metric=="Spawners"))
+eggs_lm <-  lm(log(R_med/S_med)~S_med, data=brood_t%>%filter(metric=="Eggs"))
+mass_lm <-  lm(log(R_med/S_med)~S_med, data=brood_t%>%filter(metric=="Egg mass"))
+
+summary(bodies_lm)$r.squared
+summary(eggs_lm)$r.squared
+summary(mass_lm)$r.squared
+
+```
+
+## Figure 11
+
+```{r fig11, echo=FALSE, warning=FALSE, fig.align = "center",  , fig.height=3.5, fig.width=6.2}
+# generate recruitment and yield profiles and back calculate Smax and Smsy
+SR_pred_bodies <- matrix(NA,1000,max_samples)
+Smsy_bodies_avg <- matrix(NA,1,max_samples)
+Smax_bodies_avg <- matrix(NA,1,max_samples)
+
+for(i in 1:max_samples){
+  r <- sample(seq(1,max_samples),1,replace=T)
+  #a <- model_bodies_pars$lnalpha[r]
+  a <- model_bodies_pars$lnalpha[r] + (model_bodies_pars$sigma_R[r] * model_bodies_pars$sigma_R[r])/2/(1-model_bodies_pars$phi[r] * model_bodies_pars$phi[r])
+  b <- model_bodies_pars$beta[r]
+  SR_pred_bodies[,i] <- (exp(a)*spw.bodies*exp(-b*spw.bodies))
+  
+  yield_avg <- SR_pred_bodies[,i]-spw.bodies
+  Smsy_bodies_avg[i] <- spw.bodies[which.max(yield_avg)]
+  Smax_bodies_avg[i] <- spw.bodies[which.max(SR_pred_bodies[,i])]
+}
+
+eq_smsys <- as.data.frame(cbind(rep("Spawners",max_samples),rep("Average",max_samples),as.vector(Smsy_bodies_avg),as.vector(Smax_bodies_avg)))
+
+Smsy_eggs_avg <- matrix(NA,1,max_samples)
+Smsy_eggs_recent <-Smsy_eggs_avg
+Smsy_eggs_early <-Smsy_eggs_avg
+
+Smax_eggs_avg <- Smsy_eggs_avg
+Smax_eggs_recent <- Smsy_eggs_avg
+Smax_eggs_early <- Smsy_eggs_avg
+
+for(i in 1:max_samples){
+  r <- sample(seq(1,max_samples),1,replace=T)
+  #a <- model_egg_pars$lnalpha[r]
+  a <- model_egg_pars$lnalpha[r] + (model_egg_pars$sigma_R[r] * model_egg_pars$sigma_R[r])/2/(1-model_egg_pars$phi[r] * model_egg_pars$phi[r])
+  b <- model_egg_pars$beta[r]
+  SR_pred_egg[,i] <- (exp(a)*spw.egg*exp(-b*spw.egg))
+  
+  yield_avg <- SR_pred_egg[,i]-repo_unit_to_spwn(avg_egg$avgPropFem,recent_egg$avgMetric,spw.egg)
+  Smsy_eggs_avg[i] <- repo_unit_to_spwn(avg_egg$avgPropFem,avg_egg$avgMetric,spw.egg[which.max(yield_avg)])
+
+  Smax_eggs_avg[i] <- repo_unit_to_spwn(avg_egg$avgPropFem,avg_egg$avgMetric,spw.egg[which.max(SR_pred_egg[,i])])
+    
+  yield_recent <- SR_pred_egg[,i]-repo_unit_to_spwn(recent_egg$avgPropFem,recent_egg$avgMetric,spw.egg)
+  Smsy_eggs_recent[i] <- repo_unit_to_spwn(recent_egg$avgPropFem,recent_egg$avgMetric,spw.egg[which.max(yield_recent)])
+
+  Smax_eggs_recent[i] <- repo_unit_to_spwn(recent_egg$avgPropFem,recent_egg$avgMetric,spw.egg[which.max(SR_pred_egg[,i])])
+  
+  yield_early <- SR_pred_egg[,i]-repo_unit_to_spwn(early_egg$avgPropFem,early_egg$avgMetric,spw.egg)
+  Smsy_eggs_early[i] <- repo_unit_to_spwn(early_egg$avgPropFem,early_egg$avgMetric,spw.egg[which.max(yield_early)])
+
+  Smax_eggs_early[i] <- repo_unit_to_spwn(early_egg$avgPropFem,early_egg$avgMetric,spw.egg[which.max(SR_pred_egg[,i])])
+  
+}
+
+eq_smsys_eggs_avg <- as.data.frame(cbind(rep("Eggs",max_samples),rep("Average",max_samples),as.vector(Smsy_eggs_avg),as.vector(Smax_eggs_avg)))
+eq_smsys_eggs_recent <- as.data.frame(cbind(rep("Eggs",max_samples),rep("Recent",max_samples),as.vector(Smsy_eggs_recent),as.vector(Smax_eggs_recent)))
+eq_smsys_eggs_early <- as.data.frame(cbind(rep("Eggs",max_samples),rep("Early",max_samples),as.vector(Smsy_eggs_early),as.vector(Smax_eggs_early)))
+
+eq_smsys.2 <- rbind(eq_smsys,eq_smsys_eggs_avg,eq_smsys_eggs_recent,eq_smsys_eggs_early)
+
+
+Smsy_mass_avg <- matrix(NA,1,max_samples)
+Smsy_mass_recent <-Smsy_mass_avg
+Smsy_mass_early <-Smsy_mass_avg
+
+Smax_mass_avg <- Smsy_mass_avg
+Smax_mass_recent <- Smsy_mass_avg
+Smax_mass_early <- Smsy_mass_avg
+
+for(i in 1:max_samples){
+  r <- sample(seq(1,max_samples),1,replace=T)
+  #a <- model_mass_pars$lnalpha[r]
+  a <- model_mass_pars$lnalpha[r] + (model_mass_pars$sigma_R[r] * model_mass_pars$sigma_R[r])/2/(1-model_mass_pars$phi[r] * model_mass_pars$phi[r])
+  b <- model_mass_pars$beta[r]
+  SR_pred_mass[,i] <- (exp(a)*spw.mass*exp(-b*spw.mass))
+  
+  yield_avg <- SR_pred_mass[,i]-repo_unit_to_spwn(avg_mass$avgPropFem,recent_mass$avgMetric,spw.mass)
+  Smsy_mass_avg[i] <- repo_unit_to_spwn(avg_mass$avgPropFem,avg_mass$avgMetric,spw.mass[which.max(yield_avg)])
+
+  Smax_mass_avg[i] <- repo_unit_to_spwn(avg_mass$avgPropFem,avg_mass$avgMetric,spw.mass[which.max(SR_pred_mass[,i])])
+  
+  yield_recent <- SR_pred_mass[,i]-repo_unit_to_spwn(recent_mass$avgPropFem,recent_mass$avgMetric,spw.mass)
+  Smsy_mass_recent[i] <- repo_unit_to_spwn(recent_mass$avgPropFem,recent_mass$avgMetric,spw.mass[which.max(yield_recent)])
+
+  Smax_mass_recent[i] <- repo_unit_to_spwn(recent_mass$avgPropFem,recent_mass$avgMetric,spw.mass[which.max(SR_pred_mass[,i])])
+    
+  yield_early <- SR_pred_mass[,i]-repo_unit_to_spwn(early_mass$avgPropFem,early_mass$avgMetric,spw.mass)
+  Smsy_mass_early[i] <- repo_unit_to_spwn(early_mass$avgPropFem,early_mass$avgMetric,spw.mass[which.max(yield_early)])
+
+  Smax_mass_early[i] <- repo_unit_to_spwn(early_mass$avgPropFem,early_mass$avgMetric,spw.mass[which.max(SR_pred_mass[,i])])
+  
+}
+
+
+eq_smsys_mass_avg <- as.data.frame(cbind(rep("Egg mass",max_samples),rep("Average",max_samples),as.vector(Smsy_mass_avg),as.vector(Smax_mass_avg)))
+eq_smsys_mass_recent <- as.data.frame(cbind(rep("Egg mass",max_samples),rep("Recent",max_samples),as.vector(Smsy_mass_recent),as.vector(Smax_mass_recent)))
+eq_smsys_mass_early <- as.data.frame(cbind(rep("Egg mass",max_samples),rep("Early",max_samples),as.vector(Smsy_mass_early),as.vector(Smax_mass_early)))
+
+eq_smsys.full <- rbind(eq_smsys.2,eq_smsys_mass_avg,eq_smsys_mass_recent,eq_smsys_mass_early)
+eq_smsys.full <- as.data.frame(eq_smsys.full)
+colnames(eq_smsys.full) <- c("repro_unit","Period","SMSY","SMSR")
+
+#eq_smsys.full$smsy <- as.numeric(levels(eq_smsys.full$smsy))[eq_smsys.full$smsy] 
+#eq_smsys.full$smax <- as.numeric(levels(eq_smsys.full$smax))[eq_smsys.full$smax] 
+
+eq_smsys.full$smsy <- as.numeric(as.character(eq_smsys.full$SMSY))
+eq_smsys.full$smax <- as.numeric(as.character(eq_smsys.full$SMSR))
+
+mycolors2 <- c("dark grey",rev(viridis(2)))
+
+eq_smsys.full$repro_unit <- factor(eq_smsys.full$repro_unit, levels = c("Spawners", "Eggs", "Egg mass"))
+
+a <- ggplot(eq_smsys.full, aes(smsy/1000, Period,fill=Period)) +
+      geom_boxplot(outlier.shape = NA) +
+      scale_x_continuous(limits = c(10, 75))+
+      coord_flip() + 
+      facet_grid(cols = vars(repro_unit), scales = "free_x", space = "free_x")+
+      scale_fill_manual(values = mycolors2)+ # Specify color to the fill aesthetics
+      ylab("Time period") +
+      xlab(expression(S[MSY])) +
+      theme_bw() +
+      theme(axis.title.x = element_blank(),
+        axis.text.x = element_blank(),
+        legend.key.size = unit(0.4, "cm"),
+        legend.title = element_text(size=9),
+        legend.text = element_text(size=8))
+
+b <- ggplot(eq_smsys.full, aes(smax/1000, Period,fill=Period)) +
+      geom_boxplot(outlier.shape = NA) +
+      scale_x_continuous(limits = c(20, 150))+
+      coord_flip() + 
+      facet_grid(cols = vars(repro_unit), scales = "free_x", space = "free_x")+
+      scale_fill_manual(values = mycolors2)+ # Specify color to the fill aesthetics
+      ylab("Time period") +
+      xlab(expression(S[MSR])) +
+      theme_bw()+
+      theme(axis.title.x = element_blank(),
+        axis.text.x = element_blank(),
+        legend.key.size = unit(0.4, "cm"),
+        legend.title = element_text(size=9),
+        legend.text = element_text(size=8))
+
+g <- ggarrange(a,b,
+               nrow =2, 
+               labels = c("a", "b"), 
+               common.legend = TRUE,
+               legend = "right")
+print(g)
+
+```
+
+**Figure 11**. Spawner abundance expected to maximize long-term sustainable yield ($S_{MSY}$) and recruitment ($S_{MSR}$) based on spawner-recruitment models fit to three alternative measures of reproductive output (Total egg mass, total eggs, or total spawners). Boxplots show median and 25th and 75th quartiles with whiskers extending to the lowest/highest value up to 1.5 times the interquartile range. The time period represents which years were used to calculate the average demographic qualities (sex-ratio, female age, and female length at age) used in equilibrium calculations; "Recent" corresponds to 2009-2019 and "Early" corresponds to 1982-1992.
+
+## Figure E1
+
+```{r figE1, echo=FALSE, fig.align = "center", fig.height=7}
+spwn <- exp(model_bodies_pars$lnS)
+spwn.quant <- apply(spwn, 2, quantile, probs=c(0.025,0.5,0.975))[,1:(length(sr_years)-4)]
+
+rec <-exp(model_bodies_pars$lnR)
+rec.quant <- apply(rec, 2, quantile, probs=c(0.025,0.5,0.975))[,8:dim(model_bodies_pars$R)[2]]
+
+rps <- rec[,8:dim(model_bodies_pars$R)[2]]/spwn[,1:(length(sr_years)-4)]
+rps.quant <- apply(rps, 2, quantile, probs=c(0.025,0.5,0.975))
+
+brood_t <- as.data.frame(cbind(sr_years[1:(length(sr_years)-4)],t(spwn.quant), t(rec.quant), t(rps.quant)))
+colnames(brood_t) <- c("BroodYear","S_lwr","S_med","S_upr","R_lwr","R_med","R_upr","RpS_lwr","RpS_med","RpS_upr")
+
+brood_t <- as.data.frame(brood_t)
+
+spw <- seq(0,max(brood_t[,4]),length.out=100)
+
+Profiles <- array(NA, dim = c(length(spw),max_samples,9))
+
+for(i in 1:max_samples){
+  r <- sample(seq(1,max_samples),1,replace=T)
+  a <- model_bodies_pars$lnalpha[r]
+  b <- model_bodies_pars$beta[r]
+  S_msy <- model_bodies_pars$Smsy_Sch[r]
+  R_msy <- S_msy*exp(a-b*S_msy)
+  msy <- R_msy - S_msy
+  U_max <- 1-(1/exp(a))
+  Umsy_Sch <- model_bodies_pars$Umsy_Sch[r]
+
+  for(j in 1:length(spw)){
+    spw_star <- spw[j]
+    R_star <- spw_star*exp(a-b*spw_star)
+    sus_yield <- R_star - spw_star
+    U <- ifelse(sus_yield/R_star < 0, 1, sus_yield/R_star)
+    Profiles[j,i,1] <- ifelse(sus_yield > 0.9*msy, 1, 0) # probability yield > 90% of MSY
+    Profiles[j,i,2] <- ifelse(sus_yield > 0.8*msy, 1, 0) # probability yield > 80% of MSY
+    Profiles[j,i,3] <- ifelse(sus_yield > 0.7*msy, 1, 0) # probability yield > 70% of MSY
+    Profiles[j,i,4] <- ifelse(R_star > 0.9*R_msy, 1, 0) # probability recruitment > 90% of MSR
+    Profiles[j,i,5] <- ifelse(R_star > 0.8*R_msy, 1, 0) # probability recruitment > 80% of MSR
+    Profiles[j,i,6] <- ifelse(R_star > 0.7*R_msy, 1, 0) # probability recruitment > 70% of MSR
+    if(sus_yield < (0.9*msy) & spw_star < S_msy){
+      Profiles[j,i,7] <- 1
+    } else {
+      Profiles[j,i,7] <- 0
+      }
+    if(sus_yield < (0.8*msy) & spw_star < S_msy){
+      Profiles[j,i,8] <- 1
+    } else {
+      Profiles[j,i,8] <- 0
+      }
+    if(sus_yield < (0.7*msy) & spw_star < S_msy){
+      Profiles[j,i,9] <- 1
+    } else {
+      Profiles[j,i,9] <- 0
+      }    
+        }
+}
+
+profiles_median <- cbind(spw,apply(Profiles,c(1,3),mean, na.rm=T))
+
+colnames(profiles_median) <- c("Spawners","90% MSY","80% MSY","70% MSY", "90% MSR","80% MSR","70% MSR", "90% MSY ", "80% MSY ", "70% MSY ")
+profiles_median <- as.data.frame(profiles_median)
+
+long_yield_profiles <- profiles_median%>%
+  select("Spawners","90% MSY","80% MSY","70% MSY")%>%
+  pivot_longer(!Spawners, names_to = "Metric", values_to = "perc")
+
+a <- ggplot(long_yield_profiles, aes(x = Spawners, y = perc, group = Metric, color = Metric)) +
+      geom_line(size = 1.5) +
+      scale_color_viridis(discrete = TRUE) +
+      ylab("Probability") +
+      theme(legend.position = "none") +
+      theme_bw() +
+      theme(axis.title.x = element_blank(),
+      axis.text.x = element_blank(),
+      legend.title = element_blank()) + 
+  geom_rug(data = brood_t,
+           aes(x = S_med),
+           inherit.aes = FALSE,
+           sides="b")
+
+long_rec_profiles <- profiles_median%>%
+  select("Spawners","90% MSR","80% MSR","70% MSR")%>%
+  pivot_longer(!Spawners, names_to = "Metric", values_to = "perc")
+
+b <- ggplot(long_rec_profiles, aes(x = Spawners, y = perc, group = Metric, color = Metric)) +
+      geom_line(size = 1.5) +
+      scale_color_viridis(discrete = TRUE) +
+      ylab("Probability") +
+      theme(legend.position = "none") +
+      theme_bw() +
+      theme(axis.title.x = element_blank(),
+      axis.text.x = element_blank(),
+      legend.title = element_blank()) + 
+  geom_rug(data = brood_t,
+           aes(x = S_med),
+           inherit.aes = FALSE,
+           sides="b")
+
+long_overfish_profiles <- profiles_median%>%
+  select("Spawners", "90% MSY ", "80% MSY ", "70% MSY ")%>%
+  pivot_longer(!Spawners, names_to = "Objective", values_to = "perc")
+
+c <- ggplot(long_overfish_profiles, aes(x = Spawners, y = perc, group = Objective, color = Objective)) +
+  geom_line(size = 1.5) +
+  scale_color_viridis(discrete = TRUE) +
+  xlab("Spawners") +
+  ylab("Probability ") +
+  theme(legend.position = "none") +
+  theme_bw() +
+  theme(legend.title = element_blank()) + 
+  geom_rug(data = brood_t,
+           aes(x = S_med),
+           inherit.aes = FALSE,
+           sides="b")
+
+g <- ggarrange(a,b,c,nrow =3, labels = c("a", "b", "c"), heights = c(0.75,0.75,0.9))
+print(g)
+```
+**Figure E1**. Optimal yield and recruitment probability profiles without log-normal bias correction applied. (a) Optimal yield profile showing the probability that a given spawner abundance is expected to achieve 70%, 80%, or 90% of maximum sustainable yield (MSY). (b) Optimal recruitment profile showing the probability that a given spawner abundance is expected to achieve 70%, 80%, or 90% of maximum sustainable recruitment (S~MSR~). Historic spawning escapements are shown along x-axis. Overfishing profile, calculated as 1 – P(SY > X% of MSY) at S < SMSY , and 0 at S > SMSY , showing the probability that sustained yield (SY) is reduced to less than a percentage (70%, 80%, or 90%) of MSY given a fixed level of escapement.
+
+# Tables
+
+## Table 1
+
+**Table 1**. Variables in the run reconstruction (RR) and spawner-recruitment (SRA) submodels. Stock (*s*) is lower Yukon (*l*), middle Yukon (*m*), or Canada (*c*). Location (*L*) is downriver from Pilot Station (*d*), Pilot Station (*pl*), upriver from Pilot Station (*u*), the U.S./Canada border (*b*), and Canada (*c*). Method (*j*) references various assessment methods in use at locations and tributaries throughout the Yukon River drainage. Methods may change over time and more than one method may be used at a location.
+
+```{r}
+# create storage object for tables
+main.tables.list <- list(VersionNotes = "Include some identifier text")
+
+print("to be added, see google doc")
+```
+
+## Table 2
+
+**Table 2**. Prior probability distributions for run reconstruction (RR), spawner-recruitment (SRA) and integrated (RR-SRA) parameters.
+
+```{r}
+print("to be added, see google doc")
+```
+## Table 4
+
+**Table 4**. Reconstructed total run size, spawning escapements, harvest adn harvest rates of Yukon River Chinook salmon by stock and combined. Shown are posterior medians. 
+
+```{r}
+
+cdn_RR_table <- round(cbind(sr_years, 
+                  canrun.quant[,2]*1000,canesc.quant[,2]*1000,canhar.quant[,2],canharrate.quant[,2]))
+
+colnames(cdn_RR_table) <-c("Year", "Total run", "Escapement", "Harvest", "Harvest rate (%)")
+
+main.tables.list$CDNRR <- as.data.frame(cdn_RR_table)
+
+
+lwr_RR_table <- round(cbind(sr_years, 
+                      lowrun.quant[,2]*1000,lowesc.quant[,2]*1000,lowhar.quant[,2],lowharrate.quant[,2]))
+
+colnames(lwr_RR_table) <-c("Year", "Total run", "Escapement", "Harvest", "Harvest rate (%)")
+
+main.tables.list$lwrRR <- as.data.frame(lwr_RR_table)
+
+
+mid_RR_table <- round(cbind(sr_years, 
+                      midrun.quant[,2]*1000,midesc.quant[,2]*1000,midhar.quant[,2],midharrate.quant[,2]))
+
+colnames(mid_RR_table) <-c("Year", "Total run", "Escapement", "Harvest", "Harvest rate (%)")
+
+main.tables.list$lmidRR <- as.data.frame(mid_RR_table)
+
+tot_RR_table <- round(cbind(sr_years, 
+                      totrun.quant[,2]*1000,totesc.quant[,2]*1000,tothar.quant[,2],totharrate.quant[,2]))
+
+colnames(tot_RR_table) <-c("Year", "Total run", "Escapement", "Harvest", "Harvest rate (%)")
+
+main.tables.list$ltotRR <- as.data.frame(tot_RR_table)
+```
+
+## Table 4
+
+**Table 4**. Posterior means, medians and credible intervals for leading spawner-recruitment parameters and associated biological benchmarks. Also show are estimates of the effective sample size and potential scale reduction factor for parameters and benchmarks estimated by the model.
+
+```{r}
+row.names(benchmarks2)[5] <- "Smsr"
+
+kable(benchmarks2,
+      align = "crr") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+main.tables.list$Tab3_BMPosteriors_Corrected <- benchmarks2
+
+```
+
+## Table 5
+
+**Table 5**. Posterior means, medians and credible intervals for the spawner abundance expected to maximize long-term sustainable yield (Smsy) across three different measures of reproductive output (total spawners, total eggs, and total egg mass) and three time periods."Recent" corresponds to 2009-2019 and "Early" corresponds to 1982-1992.
+
+```{r, warning=FALSE}
+smsys_summary <- eq_smsys.full%>%
+  group_by(repro_unit,Period)%>%
+  summarize(mean=mean(smsy),
+            median=median(smsy),
+            lower=quantile(smsy,probs=c(0.025)),
+            upper=quantile(smsy,probs=c(0.975)))
+smsys_summary_table <- smsys_summary[,3:6]
+
+smsys_summary_table <- round(smsys_summary_table,digits=0)
+colnames(smsys_summary_table) <- c("mean", "50%", "2.5%", "97.5%")
+rownames(smsys_summary_table) <- c("Total spawners - average", "Eggs - average", "Eggs - early", "Eggs - recent", "Egg mass - average","Egg mass - early", "Egg mass - recent")
+
+kable(smsys_summary_table,
+      align = "crr") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+main.tables.list$Tab4_MSYescQuality <- smsys_summary_table
+
+```
+
+## Table 6
+
+**Table 6**. Posterior means, medians and credible intervals for the spawner abundance expected to maximize long-term recruitment (S~MSR~) across three different measures of reproductive output (total spawners, total eggs, and total egg mass) and three time periods."Recent" corresponds to 2009-2019 and "Early" corresponds to 1982-1992.
+
+```{r, warning=FALSE}
+smax_summary <- eq_smsys.full%>%
+  group_by(repro_unit,Period)%>%
+  summarize(mean=mean(smax),
+            median=median(smax),
+            lower=quantile(smax,probs=c(0.025)),
+            upper=quantile(smax,probs=c(0.975)))
+smax_summary_table <- smax_summary[,3:6]
+
+smax_summary_table <- round(smax_summary_table,digits=0)
+colnames(smax_summary_table) <- c("mean", "50%", "2.5%", "97.5%")
+rownames(smax_summary_table) <- c("Total spawners - average", "Eggs - average", "Eggs - early", "Eggs - recent", "Egg mass - average","Egg mass - early", "Egg mass - recent")
+
+kable(smax_summary_table,
+      align = "crr") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+main.tables.list$Tab5_MSRescQuality <- smax_summary_table
+
+```
+## Table E1
+
+**Table E1**. Posterior means, medians and credible intervals for biological benchmarks that have not been log-normal bias corrected (compare to Table 3). Also show are estimates of the effective sample size and potential scale reduction factor for parameters and benchmarks estimated by the model.
+
+```{r, warning=FALSE}
+# Benchmarks w/out log-normal bias correction
+sr_years <- stan.data.bodies$years
+
+bench <- matrix(NA,max_samples,2,
+                dimnames = list(seq(1:max_samples),c("Sgen","U_msr")))
+
+spw <- seq(1,200000, length.out = 10000)
+
+for(i in 1:max_samples){
+  r <- sample(seq(1,max_samples),1,replace=T)
+  a <- model_bodies_pars$lnalpha[r]
+  b <- model_bodies_pars$beta[r]
+  smsy <- model_bodies_pars$Smsy_Sch[r]
+  sgen <- get_Sgen(exp(a),b,-1,1/b*2,smsy)
+  SR_pred <- (exp(a)*spw*exp(-b*spw))
+  
+  yield_avg <- SR_pred-spw
+  hr <- yield_avg/SR_pred
+  
+  bench[i,1] <- sgen
+  bench[i,2] <- hr[which.max(SR_pred)]
+}
+
+bench.quant <- apply(bench, 2, quantile, probs=c(0.025,0.25,0.5,0.75,0.975), na.rm=T)
+
+benchmarks <- summary(stan.fit.bodies, pars= c( "lnalpha", "S_eq", "Smsy_Sch","Umsy_Sch"))$summary[,c(1,4,6,8:10)]
+
+sgen <- c(mean(bench[,1]),bench.quant[1,1],bench.quant[3,1], bench.quant[5,1],NA,NA)
+umsr <- c(mean(bench[,2]),bench.quant[1,2],bench.quant[3,2], bench.quant[5,2],NA,NA)
+
+benchmarks3 <- rbind(benchmarks,sgen,umsr)
+
+rownames(benchmarks3) <- c("log (alpha)", "Seq", "Smsy", "Umsy", "Sgen", "Umsr")
+
+benchmarks3 <- benchmarks3[,c(1,3,2,4:6)]
+
+kable(benchmarks3,
+      align = "crr") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+main.tables.list$Tab6_BMPosteriors <- benchmarks3
+saveRDS(main.tables.list,file = "output/ModelReport_Tables_30_Nov_2021.RDS")
+
+```

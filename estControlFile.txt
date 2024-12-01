@@ -1,12 +1,15 @@
 # Estimation controls
 parameter value
 
-stocks c("LowerMainstem","WhiteDonjek","Pelly","Stewart","Carmacks","Teslin","MiddleMainstem","UpperLakesAndMainstem")
-stks c("L.Mstem","W.Donjek","Pelly","Stewart","Carmacks","Teslin","M.Mstem","U.Mstem")
+#stocks c("LowerMainstem","WhiteDonjek","Pelly","Stewart","Carmacks","Teslin","MiddleMainstem","UpperLakesAndMainstem")
+#stks c("L.Mstem","W.Donjek","Pelly","Stewart","Carmacks","Teslin","M.Mstem","U.Mstem")
+
+stocks c("NorthernYukonR.andtribs.","Whiteandtribs.","Pelly","Stewart","Nordenskiold","YukonR.Teslinheadwaters","MiddleYukonR.andtribs.","UpperYukonR.")
+stks c("NYR","White","Pelly","Stewart","Norden","Teslin","MidYR","UpperYR")
 
 # Model bounds
 initYear 1985
-lastYear 2021
+lastYear 2023
 
 # Optimization settings
 maxFunEval 100000

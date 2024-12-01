@@ -164,7 +164,6 @@ fitRR <- function( ctlFile="estControlFile.txt",
                     map        = map,
                     DLL        = "yukonChinookRunRecon",
                     random     = NULL )
-browser()
   # Set bounds
   low <- obj$par*0-Inf
   upp <- obj$par*0+Inf

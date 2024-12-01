@@ -12,12 +12,12 @@ processData <- function()
 	names(counts)[names(counts)=='count_type'] <- 'gear'
 	counts$gear <- as.character(counts$gear)
 	
-	# -- GSI sub-stock campling by day, n_sgyd --
+	# -- GSI sub-stock sampling by day, n_sgyd --
 	gsi <- read.csv('data/border-gsi-table.csv') %>%
 				 rename( sample_num=fish )
 	stockID <- read.csv('data/stockIDs.csv') %>% arrange(plotOrder)
 	stockID$stockNum <- stockID$plotOrder
-	gsi <- dplyr::left_join(gsi, stockID, by='region')
+	gsi <- dplyr::left_join(gsi, stockID, by='CU_no')
 	
 	# change gear name to gillnet or fishWheel
 	gsi$gear <- as.character(gsi$gear)
@@ -43,8 +43,8 @@ processData <- function()
 	# --- 2. Create R data files with arrays for fitRR.r ---
 	
 	# Generate array with proportions by stock, day, year, gear
-	stockNames <- stockID$stock
-	stockRegion <- stockID$region
+	stockNames <- stockID$CU_name
+	stockRegion <- stockID$CU_no
 	gsiGear <- c('eagle','fishWheel')
 	fDay <- 160
 	lDay <- 285
@@ -74,7 +74,7 @@ processData <- function()
 			tmp <- subset(gsi, year==yrs[t] & 
 								gear == gsiGear[g] &
 								!is.na(julian) &
-								!is.na(region) &
+								!is.na(CU_no) &
 								prob>0) 
 			
 			# if no data for given gear, skip
@@ -106,7 +106,7 @@ processData <- function()
 									gear == gsiGear[g] &
 									julian == days[d] &
 									!is.na(julian) &
-									!is.na(region) &
+									!is.na(CU_no) &
 									prob>0)
 	
 	
